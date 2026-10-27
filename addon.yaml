@@ -1,0 +1,40 @@
+# AWS integration: one entry per AWS account. Shows what the account runs and costs (per
+# service, this month and last), what it holds in every enabled region, and its security basics: root
+# MFA and keys, IAM users without MFA, old access keys, CloudTrail, GuardDuty and its findings, a budget or
+# billing alarm, public S3 buckets. Alerts only for real problems. It reads with read-only keys; changes need
+# the hisho-admin role, unlocked with your MFA code for at most an hour (setup: README, Settings).
+# Key: IAM > Users > Create user "hisho-readonly" (no console access), attach SecurityAudit, ViewOnlyAccess
+# and AWSBillingReadOnlyAccess, then Security credentials > Create access key ("Application running outside
+# AWS"). Save both halves as secrets (e.g. AWS_MAIN_READONLY_ACCESS_KEY_ID / _SECRET_ACCESS_KEY) and give
+# their names here. Needs boto3 on Core: .venv/bin/pip install -e '.[aws]'.
+# Cost Explorer charges $0.01 per call: Hisho makes one call per cost refresh (every 12 h by default).
+name: aws
+kind: integration
+title: AWS
+description: "Your AWS account: what runs where, what it costs, and its security basics. Changes only when you unlock them with MFA."
+version: 0.4.1
+you_need:
+  - "An AWS account you own (never a client's)"
+  - "Ten minutes in the AWS console to make a read-only user, an MFA device and one admin role (steps under Settings)"
+provider: provider.py
+secret_rotate: "AWS console > IAM > Users > hisho-readonly > Security credentials > Create access key, then deactivate and delete the old one"
+entry_label: AWS account
+entry_schema:
+  access_key_id: password      # the access key ID (typed, or its secret's name)
+  secret_access_key: password  # the secret access key (typed, or its secret's name)
+  account_id: "str?"           # the account these keys must belong to (learned by Test / Add); other accounts are refused
+  regions: "str?"              # only these regions, comma-separated (empty = every region enabled in the account)
+  budget_usd: "int?"           # alert when the month so far passes this many dollars
+  every_hours: "int?"          # how often to read the account (default 6)
+  cost_every_hours: "int?"     # how often to ask Cost Explorer, $0.01 a call (default 12)
+  admin_role_arn: "str?"       # arn:aws:iam::ACCOUNT_ID:role/hisho-admin: changes, unlocked with an MFA code for an hour
+  mfa_serial: "str?"           # arn:aws:iam::ACCOUNT_ID:mfa/hisho: the read-only user's MFA device
+  public_ok: "str?"            # S3 buckets you meant to make public (set by the "on purpose" button)
+  note: "str?"
+entry_form:
+  access_key_id: "Access key ID (paste it, or its secret's name, e.g. AWS_MAIN_READONLY_ACCESS_KEY_ID)"
+  secret_access_key: "Secret access key (paste it, or its secret's name, e.g. AWS_MAIN_READONLY_SECRET_ACCESS_KEY)"
+  admin_role_arn: "Admin role for changes (optional), e.g. arn:aws:iam::123456789012:role/hisho-admin"
+  mfa_serial: "MFA device (with the admin role), e.g. arn:aws:iam::123456789012:mfa/hisho"
+  budget_usd: "Monthly budget in dollars (optional: alert when the month passes it)"
+  note: "Note"
