@@ -12,7 +12,7 @@ name: aws
 kind: integration
 title: AWS
 description: "Your AWS account: what runs where, what it costs, and its security basics. Changes only when you unlock them with MFA."
-version: 0.4.1
+version: 0.4.2
 you_need:
   - "An AWS account you own (never a client's)"
   - "Ten minutes in the AWS console to make a read-only user, an MFA device and one admin role (steps under Settings)"
@@ -38,3 +38,29 @@ entry_form:
   mfa_serial: "MFA device (with the admin role), e.g. arn:aws:iam::123456789012:mfa/hisho"
   budget_usd: "Monthly budget in dollars (optional: alert when the month passes it)"
   note: "Note"
+help:
+  access_key_id:
+    label: Access key ID
+    say: "The first half of the read-only key, starting with AKIA. Make a user hisho-readonly (no console access) with SecurityAudit, ViewOnlyAccess and AWSBillingReadOnlyAccess, then Security credentials > Create access key."
+    get: "https://console.aws.amazon.com/iam/home#/users"
+    get_label: Open IAM users in AWS
+  secret_access_key:
+    label: Secret access key
+    say: "The second half of that key. AWS shows it only once, right after you create the key: copy it then."
+    get: "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html"
+    get_label: How to create an access key
+  admin_role_arn:
+    label: Admin role (optional)
+    say: "Only if you want Hisho to make changes: the hisho-admin role's ARN, shown at the top of the role's page in IAM > Roles. Leave empty to keep Hisho read only."
+    get: "https://console.aws.amazon.com/iam/home#/roles"
+    get_label: Open IAM roles in AWS
+  mfa_serial:
+    label: MFA device (optional)
+    say: "With the admin role: the ARN of the virtual MFA device on hisho-readonly, shown under its Security credentials. Hisho asks for its 6-digit code before any change."
+    get: "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa_enable_virtual.html"
+    get_label: How to add a virtual MFA device
+  budget_usd:
+    label: Monthly budget in dollars
+    say: "Optional. Hisho alerts when this month's spending passes this amount. A plain number, like 50."
+  note:
+    say: "Anything you want to remember about this account, like which business it belongs to."
