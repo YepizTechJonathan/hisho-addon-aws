@@ -3,19 +3,19 @@
 # MFA and keys, IAM users without MFA, old access keys, CloudTrail, GuardDuty and its findings, a budget or
 # billing alarm, public S3 buckets. Alerts only for real problems. It reads with read-only keys; changes need
 # the hisho-admin role, unlocked with your MFA code for at most an hour (setup: README, Settings).
-# Key: IAM > Users > Create user "hisho-readonly" (no console access), attach SecurityAudit, ViewOnlyAccess
-# and AWSBillingReadOnlyAccess, then Security credentials > Create access key ("Application running outside
-# AWS"). Save both halves as secrets (e.g. AWS_MAIN_READONLY_ACCESS_KEY_ID / _SECRET_ACCESS_KEY) and give
-# their names here. Needs boto3 on Core: .venv/bin/pip install -e '.[aws]'.
+# Key: "Paste from AWS CloudShell" (connect:) runs one command in CloudShell that makes the user hisho-readonly
+# (SecurityAudit, ViewOnlyAccess, AWSBillingReadOnlyAccess) and a new access key, and pastes what it prints; the
+# secret half becomes a local secret, the pasted text is not kept. Or by hand: IAM > Users > Create user, the same
+# three policies, Security credentials > Create access key, and paste both halves (or their secrets' names). Needs boto3 on Core: .venv/bin/pip install -e '.[aws]'.
 # Cost Explorer charges $0.01 per call: Hisho makes one call per cost refresh (every 12 h by default).
 name: aws
 kind: integration
 title: AWS
 description: "Your AWS account: what runs where, what it costs, and its security basics. Changes only when you unlock them with MFA."
-version: 0.4.2
+version: 0.5.0
 you_need:
   - "An AWS account you own (never a client's)"
-  - "Ten minutes in the AWS console to make a read-only user, an MFA device and one admin role (steps under Settings)"
+  - "One command pasted into AWS CloudShell (on the add form) to make Hisho's read-only key; an MFA device and admin role only if you want Hisho to make changes (steps under Settings)"
 provider: provider.py
 secret_rotate: "AWS console > IAM > Users > hisho-readonly > Security credentials > Create access key, then deactivate and delete the old one"
 entry_label: AWS account
@@ -31,6 +31,17 @@ entry_schema:
   mfa_serial: "str?"           # arn:aws:iam::ACCOUNT_ID:mfa/hisho: the read-only user's MFA device
   public_ok: "str?"            # S3 buckets you meant to make public (set by the "on purpose" button)
   note: "str?"
+connect:
+  label: Paste from AWS CloudShell
+  say: 'No keys to make by hand: one command in AWS''s own terminal makes Hisho''s read-only user and its key. The pasted text is not kept; the secret half of the key is saved as a secret on this machine.'
+  form: []
+  fields:
+    printed_key:
+      label: What CloudShell printed
+      say: 1. Open CloudShell (signed in to AWS as you). 2. Copy the command above, paste it there and press Enter. 3. Copy the one line it prints, from { to }, and paste it here. If it says LimitExceeded, delete the old key in IAM > Users > hisho-readonly > Security credentials and run it again.
+      copy: U=hisho-readonly; aws iam get-user --user-name $U >/dev/null 2>&1 || aws iam create-user --user-name $U >/dev/null && for P in SecurityAudit job-function/ViewOnlyAccess AWSBillingReadOnlyAccess; do aws iam attach-user-policy --user-name $U --policy-arn arn:aws:iam::aws:policy/$P; done && A=$(aws sts get-caller-identity --query Account --output text) && aws iam create-access-key --user-name $U --query "{AccessKeyId:AccessKey.AccessKeyId,SecretAccessKey:AccessKey.SecretAccessKey,Account:'$A'}" --output json | tr -d ' \n'; echo
+      get: https://console.aws.amazon.com/cloudshell/home
+      get_label: Open AWS CloudShell
 entry_form:
   access_key_id: "Access key ID (paste it, or its secret's name, e.g. AWS_MAIN_READONLY_ACCESS_KEY_ID)"
   secret_access_key: "Secret access key (paste it, or its secret's name, e.g. AWS_MAIN_READONLY_SECRET_ACCESS_KEY)"
@@ -41,9 +52,9 @@ entry_form:
 help:
   access_key_id:
     label: Access key ID
-    say: "The first half of the read-only key, starting with AKIA. Make a user hisho-readonly (no console access) with SecurityAudit, ViewOnlyAccess and AWSBillingReadOnlyAccess, then Security credentials > Create access key."
-    get: "https://console.aws.amazon.com/iam/home#/users"
-    get_label: Open IAM users in AWS
+    say: "Easiest: use Paste from AWS CloudShell above, which fills both halves of the key for you. By hand: the first half of the read-only key, starting with AKIA. Make a user hisho-readonly (no console access) with SecurityAudit, ViewOnlyAccess and AWSBillingReadOnlyAccess, then Security credentials > Create access key."
+    get: "https://console.aws.amazon.com/cloudshell/home"
+    get_label: Open AWS CloudShell
   secret_access_key:
     label: Secret access key
     say: "The second half of that key. AWS shows it only once, right after you create the key: copy it then."

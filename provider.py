@@ -14,6 +14,7 @@ import datetime as dt
 import io
 import json
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -41,12 +42,20 @@ class WrongAccount(AWSError):
 
 # ── talking to AWS ─────────────────────────────────────────────────────────
 
+def key_id(entry: dict[str, Any], ctx: Any) -> str:
+    """The access key ID: kept as itself when it is one (AKIA... / ASIA...; an all-capitals value is taken for a
+    secret's name by Hisho, so a pasted ID stays in the entry as typed), else the secret it names. The secret
+    access key is always a secret."""
+    value = str(entry.get("access_key_id") or "").strip()
+    return value if re.fullmatch(r"(AKIA|ASIA)[A-Z0-9]{16}", value) else ctx.secret(value).strip()
+
+
 def session(entry: dict[str, Any], ctx: Any) -> Any:
     try:
         import boto3
     except ImportError:
         raise AWSError("boto3 isn't installed on Core: run .venv/bin/pip install -e '.[aws]' there")
-    return boto3.session.Session(aws_access_key_id=ctx.secret(entry["access_key_id"]).strip(),
+    return boto3.session.Session(aws_access_key_id=key_id(entry, ctx),
                                  aws_secret_access_key=ctx.secret(entry["secret_access_key"]).strip(),
                                  region_name=HOME_REGION)
 
@@ -1195,6 +1204,95 @@ def test(entry: dict[str, Any], ctx: Any) -> dict[str, Any]:
             "message": f"Connected to AWS account {account} as {str(me.get('Arn')).split(':')[-1]}"
                        + ("" if want else "; only this account will be read") + ". The first full read takes about a minute."}
 
+
+
+# ── one paste from AWS CloudShell (addon.yaml connect:) ─────────────────────
+
+#: Run once in AWS CloudShell (https://console.aws.amazon.com/cloudshell/home), signed in as you. It makes (or
+#: reuses) the user hisho-readonly with the three read-only policies, makes a new access key and prints one line:
+#: {"AccessKeyId": ..., "SecretAccessKey": ..., "Account": ...}. AWS allows two keys per user: a third run says
+#: LimitExceeded until an old key is deleted (IAM > Users > hisho-readonly > Security credentials).
+CLOUDSHELL_COMMAND = (
+    "U=hisho-readonly; aws iam get-user --user-name $U >/dev/null 2>&1 || aws iam create-user --user-name $U >/dev/null"
+    " && for P in SecurityAudit job-function/ViewOnlyAccess AWSBillingReadOnlyAccess; do aws iam attach-user-policy"
+    " --user-name $U --policy-arn arn:aws:iam::aws:policy/$P; done && A=$(aws sts get-caller-identity --query Account"
+    " --output text) && aws iam create-access-key --user-name $U --query"
+    " \"{AccessKeyId:AccessKey.AccessKeyId,SecretAccessKey:AccessKey.SecretAccessKey,Account:'$A'}\" --output json"
+    " | tr -d ' \\n'; echo")
+WAIT_TRIES, WAIT_SECONDS = 6, 3    # a brand-new key takes a few seconds to work everywhere in AWS
+_sleep = time.sleep
+
+
+def parse_printed(text: Any) -> dict[str, str]:
+    """The key ID, secret key and account from what the command printed (its JSON line, the plain
+    ``aws iam create-access-key`` output, or the three values in any order). {} when the key isn't all there."""
+    raw = str(text or "").strip()
+    out: dict[str, str] = {}
+    try:
+        data = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        key = data.get("AccessKey") if isinstance(data.get("AccessKey"), dict) else data
+        out = {"access_key_id": str(key.get("AccessKeyId") or ""), "secret_access_key": str(key.get("SecretAccessKey") or ""),
+               "account_id": str(data.get("Account") or key.get("Account") or "")}
+    if not out.get("access_key_id") or not out.get("secret_access_key"):
+        kid = re.search(r"\b(AKIA[0-9A-Z]{16})\b", raw)
+        sec = re.search(r"(?<![A-Za-z0-9/+])([A-Za-z0-9/+]{40})(?![A-Za-z0-9/+=])", raw)
+        acct = re.search(r"(?<!\d)(\d{12})(?!\d)", raw)
+        out = {"access_key_id": kid.group(1) if kid else "", "secret_access_key": sec.group(1) if sec else "",
+               "account_id": acct.group(1) if acct else ""}
+    if not out.get("account_id"):
+        acct = re.search(r"(?<!\d)(\d{12})(?!\d)", raw)
+        out["account_id"] = acct.group(1) if acct else ""
+    if not re.fullmatch(r"AKIA[0-9A-Z]{16}", out["access_key_id"]) or not re.fullmatch(r"[A-Za-z0-9/+]{40}", out["secret_access_key"]):
+        return {}
+    if not re.fullmatch(r"\d{12}", out.get("account_id") or ""):
+        out.pop("account_id", None)
+    return out
+
+
+class _Pasted:
+    """A Context whose two key secrets are the pasted values (used only while connecting, never stored here)."""
+
+    def __init__(self, ctx: Any, values: dict[str, str]) -> None:
+        self._ctx, self._values = ctx, values
+
+    def secret(self, name: str) -> str:
+        return self._values[name] if name in self._values else self._ctx.secret(name)
+
+
+def connect(values: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """Paste from AWS CloudShell: the printed line becomes the entry (key ID, secret key, account). The pasted text
+    itself is not kept; Core stores both key halves as local secrets. Waits for a brand-new key to start working."""
+    got = parse_printed(values.get("printed_key"))
+    if not got:
+        return {"ok": False, "error": "no access key found in what was pasted",
+                "explain": "Hisho couldn't find a new access key in that. Run the command in CloudShell again and "
+                           "paste the whole line it prints, from { to }. If it said LimitExceeded, the user already "
+                           "has two keys: delete the old one in IAM > Users > hisho-readonly > Security credentials, "
+                           "then run it again."}
+    names = {"HISHO_PASTED_ACCESS_KEY_ID": got["access_key_id"], "HISHO_PASTED_SECRET_ACCESS_KEY": got["secret_access_key"]}
+    trial = {**{k: v for k, v in values.items() if k != "printed_key"}, "access_key_id": "HISHO_PASTED_ACCESS_KEY_ID",
+             "secret_access_key": "HISHO_PASTED_SECRET_ACCESS_KEY", **({"account_id": got["account_id"]} if "account_id" in got else {})}
+    res: dict[str, Any] = {}
+    for i in range(WAIT_TRIES):
+        res = test(trial, _Pasted(ctx, names))
+        if res.get("ok") or "belong to AWS account" in str(res.get("error")) or "boto3" in str(res.get("error")):
+            break
+        if i < WAIT_TRIES - 1:
+            _sleep(WAIT_SECONDS)
+    if not res.get("ok"):
+        return {"ok": False, "error": str(res.get("error") or "AWS refused the key"),
+                "explain": "AWS didn't accept that key yet. A brand-new key can take a minute: wait a moment and "
+                           "press the button again with the same text. If it still fails, run the command again for "
+                           "a fresh key."}
+    account = got.get("account_id") or str((res.get("fill") or {}).get("account_id") or "")
+    entry = {"access_key_id": got["access_key_id"], "secret_access_key": got["secret_access_key"],
+             **({"account_id": account} if account else {})}
+    return {"ok": True, "entry": entry,
+            "message": f"Connected to AWS account {account or '?'} as hisho-readonly (read only). The secret key is kept as a "
+                       "secret on this machine; the pasted text is not kept. The first full read takes about a minute."}
 
 def describe_secret(entry: dict[str, Any], ctx: Any) -> str:
     """The 'What:' line of the keys' Infisical comment: which user, which account, which policies."""

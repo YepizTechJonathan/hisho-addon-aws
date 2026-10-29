@@ -26,7 +26,7 @@ Needs boto3 on the Core machine: `.venv/bin/pip install -e '.[aws]'` in Hisho's 
 
 - You need:
   - An AWS account you own (never a client's)
-  - Ten minutes in the AWS console to make a read-only user, an MFA device and one admin role (steps under Settings)
+  - One command pasted into AWS CloudShell (on the add form) to make Hisho's read-only key; an MFA device and admin role only if you want Hisho to make changes (steps under Settings)
 - Runs on: the Core machine, inside Hisho Core
 - One entry per AWS account, each with:
   - `access_key_id` (password, kept as a local secret, required)
@@ -59,20 +59,42 @@ Its card shows this month's cost and any security problem. Its page (**Add-ons >
 
 ## Settings
 
-Set up the AWS side once, in the AWS console signed in as you. `ACCOUNT_ID` is your 12-digit account
-number (top right).
+**Read only (all most people need): one paste.** On **Add-ons > AWS > + add**, give the account a name (e.g.
+`main`) and use **Paste from AWS CloudShell**:
 
-1. **User `hisho-readonly`** (IAM > Users > Create user, no console access): attach `SecurityAudit`,
-   `ViewOnlyAccess` and `AWSBillingReadOnlyAccess`; add an inline policy allowing `sts:AssumeRole` on
-   `arn:aws:iam::ACCOUNT_ID:role/hisho-admin`; assign a virtual MFA device named `hisho`; create an access key
-   ("Application running outside AWS") and save both halves as secrets:
-   `hisho secret put AWS_MAIN_READONLY_ACCESS_KEY_ID` and `hisho secret put AWS_MAIN_READONLY_SECRET_ACCESS_KEY`.
+1. Sign in to the AWS console as you and open **CloudShell** (the `>_` icon at the top, or
+   https://console.aws.amazon.com/cloudshell/home).
+2. Paste this and press Enter:
+
+   ```bash
+   U=hisho-readonly; aws iam get-user --user-name $U >/dev/null 2>&1 || aws iam create-user --user-name $U >/dev/null && for P in SecurityAudit job-function/ViewOnlyAccess AWSBillingReadOnlyAccess; do aws iam attach-user-policy --user-name $U --policy-arn arn:aws:iam::aws:policy/$P; done && A=$(aws sts get-caller-identity --query Account --output text) && aws iam create-access-key --user-name $U --query "{AccessKeyId:AccessKey.AccessKeyId,SecretAccessKey:AccessKey.SecretAccessKey,Account:'$A'}" --output json | tr -d ' \n'; echo
+   ```
+
+   It makes (or reuses) the IAM user `hisho-readonly` with `SecurityAudit`, `ViewOnlyAccess` and
+   `AWSBillingReadOnlyAccess`, creates a new access key for it and prints one line:
+   `{"AccessKeyId":"AKIA...","SecretAccessKey":"...","Account":"123456789012"}`.
+3. Copy that whole line into **What CloudShell printed** and press the button. Hisho checks the key (a brand-new key
+   can take a few seconds), pins the account, and keeps the secret half of the key as a local secret on the Core machine (the key ID, which
+   isn't secret on its own, stays in the entry); the
+   pasted text itself is not kept anywhere.
+
+Running it again just makes another key for the same user. AWS allows two keys per user: a third run says
+`LimitExceeded` until you delete the old key (IAM > Users > hisho-readonly > Security credentials).
+
+**Changes (optional).** Only if you want Hisho to make changes, set up the rest once, in the AWS console signed in
+as you. `ACCOUNT_ID` is your 12-digit account number (top right).
+
+1. **User `hisho-readonly`** (made above, or by hand: IAM > Users > Create user, no console access, the same three
+   policies, then Security credentials > Create access key, "Application running outside AWS"): add an inline
+   policy allowing `sts:AssumeRole` on `arn:aws:iam::ACCOUNT_ID:role/hisho-admin` and assign a virtual MFA device
+   named `hisho`. (A key made by hand can be pasted into the form's two key fields, or saved as secrets first:
+   `hisho secret put AWS_MAIN_READONLY_ACCESS_KEY_ID` and `hisho secret put AWS_MAIN_READONLY_SECRET_ACCESS_KEY`.)
 2. **Role `hisho-admin`** (IAM > Roles > Create role > Custom trust policy): trust
    `arn:aws:iam::ACCOUNT_ID:user/hisho-readonly` for `sts:AssumeRole` only with `aws:MultiFactorAuthPresent` =
    `true`; attach `AdministratorAccess`; maximum session 1 hour; add an inline deny policy `hisho-guardrails` so
    even unlocked it can't stop CloudTrail or GuardDuty, touch billing or close the account, change the
    `hisho-ceiling` budget (`budgets:ModifyBudget` on it), or change itself, the read-only user or the MFA device.
-3. **In Hisho** (**Add-ons > AWS > + add**, entry `main`): the two secret names, `admin_role_arn`
+3. **In Hisho** (the entry's **edit**): `admin_role_arn`
    (`arn:aws:iam::ACCOUNT_ID:role/hisho-admin`) and `mfa_serial` (`arn:aws:iam::ACCOUNT_ID:mfa/hisho`). Saving
    tests the keys and pins the account: keys from any other account are refused afterwards.
 4. **Budgets** (Billing and Cost Management > Budgets): a `hisho-ceiling` you set by hand (Hisho can never

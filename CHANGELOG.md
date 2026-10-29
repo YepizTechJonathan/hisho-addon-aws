@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0
+
+- One-paste setup: **Paste from AWS CloudShell** on the add form (addon.yaml `connect:`). One command in CloudShell
+  makes (or reuses) the read-only user hisho-readonly with SecurityAudit, ViewOnlyAccess and AWSBillingReadOnlyAccess,
+  creates a key and prints one line; pasting it fills the key, its secret and the account. Hisho waits a few seconds
+  for a brand-new key, keeps the secret half as a local secret and never keeps the pasted text. The admin role and MFA
+  stay optional; the full form is unchanged.
+- The access key's help links to AWS CloudShell.
+- Fix: an access key ID pasted into the form (AKIA..., all capitals) was taken for a secret's name and the key
+  failed; it is now used as itself (the secret half is still always a secret).
+
 ## 0.4.2
 
 - Every field on its setup form says in plain words what it is, and links to where to get it (addon.yaml `help:`, shown by Hisho's dashboard).
